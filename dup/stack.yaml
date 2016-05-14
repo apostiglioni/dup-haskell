@@ -40,9 +40,11 @@ packages:
 # Dependency packages to be pulled from upstream that are not in the resolver
 # (e.g., acme-missiles-0.3)
 extra-deps:
-  - pipes-4.1.9
-  - pipes-bytestring-2.1.2
+  - conduit-1.2.6.4
+    #  - pipes-4.1.9
+    #  - pipes-bytestring-2.1.2
   - cryptonite-0.15 
+  - unix-2.7.1.0
 
 # Override default flag values for local packages and extra-deps
 flags: {}

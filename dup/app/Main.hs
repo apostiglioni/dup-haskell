@@ -1,4 +1,13 @@
-{-# LANGUAGE ScopedTypeVariables #-}
+-- walk2 "test" $= differentCanonicalPath $= getStatus $= gSize $= gMD5 $$ CL.consume
+
+
+
+-- <srhb> :t fmap
+-- [11:57] <lambdabot> Functor f => (a -> b) -> f a -> f b
+-- [11:58] == jfb_ [~jfb_@107.179.158.248] has joined #haskell-beginners
+-- [11:58] <srhb> Here, a ~ [Digest MD5], f ~ IO and b ~ Map FilePath (Digest MD5)
+
+
 
 module Main where
 
@@ -17,6 +26,7 @@ import Control.Monad.IO.Class (liftIO)
 import qualified Data.Set as Set
 import qualified Data.Map.Strict as Map
 import System.Posix
+import Data.Maybe (fromMaybe)
 
 
 -- type Source m a = ConduitM () a m () -- no meaningful input or return value
@@ -70,11 +80,44 @@ data Partitioner = FileSize FileOffset --FileSize
 --                 , partition :: PartitionMethod
 --                 } deriving (Show)
 
-data Cluster = Cluster { 
-                 key :: [Partitioner] 
-               , value :: [FileData]
-               }
+data Cluster a b = Cluster {
+                        key   :: [a]
+                      , value :: [b]
+                      }
     deriving (Show)
+
+--pepe :: Map.Map (IO (Digest MD5)) [FilePath]
+pepe = do
+  let a:b = ["dup.cabal"]
+  liftIO $ print a
+  liftIO $ print b
+  x <- mapM md5 ["dup.cabal"]
+  liftIO $ print x
+--  categorize (mapM md5) ["dup.cabal"] --(return ["dup.cabal"] :: IO [FilePath])
+
+--categorize2 :: Ord k => (a -> IO k) -> [a] -> IO (Map.Map k [a])
+--
+categorizeM :: (Monad m, Ord k) => (a -> m k) -> [a] -> m (Map.Map k [a])
+categorizeM categorizer = loop Map.empty
+  where
+    loop acc [] = return acc
+    loop acc (x : xs) = do
+      category <- categorizer x
+      let members = fromMaybe [] (Map.lookup category acc)
+      loop (Map.insert category (x : members) acc) xs
+
+
+categorize :: Ord k => (a -> k) -> [a] -> Map.Map k [a]
+categorize categorizer = loop Map.empty
+  where
+    loop acc [] = acc
+    loop acc (x : xs) = do
+      let category = categorizer x
+      let members = fromMaybe [] (Map.lookup category acc)
+      loop (Map.insert category (x : members) acc) xs
+
+
+type FileDataCluster = Cluster Partitioner FileData
 
 getStatus :: Conduit FilePath IO FileData
 getStatus = do
@@ -87,10 +130,27 @@ getStatus = do
       yield $ FileData path status
       getStatus
 
-gSize :: Conduit FileData IO Cluster
+
+gMD5 :: Conduit FileDataCluster IO FileDataCluster
+gMD5 = conduit Map.empty
+  where
+    conduit :: Map.Map (Digest MD5) FileDataCluster -> Conduit FileDataCluster IO FileDataCluster
+    conduit map = do
+      maybeCluster <- await
+      case maybeCluster of
+        Just ( Cluster k v ) -> do
+          liftIO $ print v
+--
+--          md5 <- liftIO (hashFile "dup.cabal" :: IO (Digest MD5))
+--          liftIO $ print md5
+          yield $ Cluster k v
+          conduit map
+        Nothing -> return ()
+
+gSize :: Conduit FileData IO FileDataCluster
 gSize = conduit Map.empty
   where
-    conduit :: Map.Map FileOffset Cluster -> Conduit FileData IO Cluster
+    conduit :: Map.Map FileOffset FileDataCluster -> Conduit FileData IO FileDataCluster
     conduit map = do
       maybeData <- await
       case maybeData of
@@ -106,8 +166,8 @@ gSize = conduit Map.empty
               let newCluster = Cluster (key cluster) (fileData : (value cluster))
               conduit $ Map.insert size newCluster map
         Nothing -> do
---        TODO:  traverse yield map
-          Map.traverseWithKey (\k v -> yield v) map
+          traverse yield map
+          --Map.traverseWithKey (\k v -> yield v) map
           return ()
 
 
@@ -176,3 +236,7 @@ main = do
 ----  Probable cause: ‘print’ is applied to too few arguments
 ----  In the second argument of ‘(>>)’, namely ‘print’
 ----  In a stmt of a 'do' block: hashFile "dup.cabal" >> print
+
+md5 :: FilePath -> IO (Digest MD5)
+md5 = hashFile
+

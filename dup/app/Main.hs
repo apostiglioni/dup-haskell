@@ -1,13 +1,6 @@
 -- walk2 "test" $= differentCanonicalPath $= getStatus $= gSize $= (dig md5) $$ CL.consume
 
 
--- <srhb> :t fmap
--- [11:57] <lambdabot> Functor f => (a -> b) -> f a -> f b
--- [11:58] == jfb_ [~jfb_@107.179.158.248] has joined #haskell-beginners
--- [11:58] <srhb> Here, a ~ [Digest MD5], f ~ IO and b ~ Map FilePath (Digest MD5)
-
-
-
 module Main where
 
 import Lib
@@ -21,12 +14,11 @@ import System.FilePath ((</>))
 import System.IO (withFile, IOMode(ReadMode), isEOF)
 import Crypto.Hash (Digest, hashInitWith, hashUpdate, hashFinalize, Context, hash)
 import Crypto.Hash.Algorithms --(MD5)
-import Control.Monad.IO.Class (liftIO)
+import Control.Monad.IO.Class (liftIO, MonadIO)
 import qualified Data.Set as Set
 import qualified Data.Map.Strict as Map
 import System.Posix
 import Data.Maybe (fromMaybe)
-
 
 -- type Source m a = ConduitM () a m () -- no meaningful input or return value
 -- type Conduit a m b = ConduitM a b m () -- no meaningful return value
@@ -85,20 +77,38 @@ data Cluster a b = Cluster {
                       }
     deriving (Show)
 
-
---dig :: (Monad m, Partitioner k) => (a -> m k) -> Cluster k a -> [Cluster k a]
---dig :: (Monad m) => (a -> m k) -> Conduit (Cluster k a) IO (Cluster k a)
--- TODO: Review type
+dig :: (MonadIO m) =>
+      (FilePath -> IO (Digest MD5)) -> ConduitM (Cluster Partitioner FileData) (Cluster Partitioner FileData) m ()
+-- TODO: Review type. Why does it break when generalizing Digest MD5 to a type variable?
+--
+-- returning Map.traverseWithKey
+-- Control.Monad.IO.Class.MonadIO m =>
+--      (FilePath -> IO (Digest MD5))
+--           -> ConduitM
+--                     (Cluster Partitioner FileData) (Cluster Partitioner
+--                     FileData) m ()
+--
+-- returning yield $ Cluster k v
+-- (Ord k, Control.Monad.IO.Class.MonadIO m) =>
+--      (FilePath -> IO k)
+--           -> ConduitM (Cluster a FileData) (Cluster a FileData) m ()
 dig categorizer = do
   maybeCluster <- await
   case maybeCluster of
     Nothing -> return ()
-    Just ( Cluster k v ) -> do
-      categories <- liftIO $ categorizeM (categorizer . path) v
-      Map.traverseWithKey 
-        (\categoryKey categoryValue -> yield $ Cluster (D categoryKey : k) categoryValue) 
-        categories
-      dig categorizer
+    Just ( Cluster clusterKey clusterValue )
+      -- TODO: should not compare to one, but if the size of clustervalue is
+      --       different to the size of the categorized data
+      -- TODO: Complete function, handle all cases
+      | length clusterValue == 1 -> do
+          yield $ Cluster clusterKey clusterValue
+          dig categorizer
+      | length clusterValue > 1 -> do
+          categories <- liftIO $ categorizeM (categorizer . path) clusterValue
+          yieldCategories clusterKey categories
+          dig categorizer
+  where
+    yieldCategories clusterKey = Map.traverseWithKey (\key value -> yield $ Cluster (D key : clusterKey) value)
 
   
   
@@ -138,22 +148,17 @@ getStatus = do
       yield $ FileData path status
       getStatus
 
-gMD5 :: Conduit FileDataCluster IO FileDataCluster
-gMD5 = conduit Map.empty
-  where
-    conduit :: Map.Map (Digest MD5) FileDataCluster -> Conduit FileDataCluster IO FileDataCluster
-    conduit map = do
-      maybeCluster <- await
-      case maybeCluster of
-        Just ( Cluster k v ) -> do
-          
-          liftIO $ print v
---
---          md5 <- liftIO (hashFile "dup.cabal" :: IO (Digest MD5))
---          liftIO $ print md5
-          yield $ Cluster k v
-          conduit map
-        Nothing -> return ()
+----- gContent :: Conduit FildeDataCluster IO FileDataCluster
+----- gContent = do
+-----   maybeCluster <- await
+-----   case maybeCluster of
+-----     Nothing -> return ()
+-----     Just (Cluster clusterKey clusterValue) -> do
+      
+
+
+--gMD5 :: Conduit FileDataCluster IO FileDataCluster
+--gMD5 = dig md5
 
 gSize :: Conduit FileData IO FileDataCluster
 gSize = conduit Map.empty

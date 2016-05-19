@@ -1,5 +1,4 @@
--- walk2 "test" $= differentCanonicalPath $= getStatus $= gSize $= gMD5 $$ CL.consume
-
+-- walk2 "test" $= differentCanonicalPath $= getStatus $= gSize $= (dig md5) $$ CL.consume
 
 
 -- <srhb> :t fmap
@@ -72,8 +71,8 @@ instance Show FileData where
 -- TODO: Partitioner could be a class defining the methods name and partition,
 -- and FileSize and Digest would be instances uf the Partitioner class
 data Partitioner = FileSize FileOffset --FileSize
-                 | Digest -- TODO: There must be a way to generalize MD5
-    deriving (Show)
+                 | D (Digest MD5) -- TODO: There must be a way to generalize MD5
+    deriving (Show, Ord, Eq)
 
 --data Partitioner = Partitioner {
 --                   name      :: String
@@ -86,19 +85,28 @@ data Cluster a b = Cluster {
                       }
     deriving (Show)
 
---pepe :: Map.Map (IO (Digest MD5)) [FilePath]
-pepe = do
-  let a:b = ["dup.cabal"]
-  liftIO $ print a
-  liftIO $ print b
-  x <- mapM md5 ["dup.cabal"]
-  liftIO $ print x
---  categorize (mapM md5) ["dup.cabal"] --(return ["dup.cabal"] :: IO [FilePath])
 
---categorize2 :: Ord k => (a -> IO k) -> [a] -> IO (Map.Map k [a])
---
+--dig :: (Monad m, Partitioner k) => (a -> m k) -> Cluster k a -> [Cluster k a]
+--dig :: (Monad m) => (a -> m k) -> Conduit (Cluster k a) IO (Cluster k a)
+-- TODO: Review type
+dig categorizer = do
+  maybeCluster <- await
+  case maybeCluster of
+    Nothing -> return ()
+    Just ( Cluster k v ) -> do
+      categories <- liftIO $ categorizeM (categorizer . path) v
+      Map.traverseWithKey 
+        (\categoryKey categoryValue -> yield $ Cluster (D categoryKey : k) categoryValue) 
+        categories
+      dig categorizer
+
+  
+  
+
 categorizeM :: (Monad m, Ord k) => (a -> m k) -> [a] -> m (Map.Map k [a])
 categorizeM categorizer = loop Map.empty
+-- TODO: Investigate Monad vs Applicative
+-- TODO: Generalize list to Traversable
   where
     loop acc [] = return acc
     loop acc (x : xs) = do
@@ -130,7 +138,6 @@ getStatus = do
       yield $ FileData path status
       getStatus
 
-
 gMD5 :: Conduit FileDataCluster IO FileDataCluster
 gMD5 = conduit Map.empty
   where
@@ -139,6 +146,7 @@ gMD5 = conduit Map.empty
       maybeCluster <- await
       case maybeCluster of
         Just ( Cluster k v ) -> do
+          
           liftIO $ print v
 --
 --          md5 <- liftIO (hashFile "dup.cabal" :: IO (Digest MD5))

@@ -21,7 +21,7 @@ import Control.Monad.IO.Class (liftIO, MonadIO)
 import qualified Data.Set as Set
 import qualified Data.Map.Strict as Map
 import System.Posix
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, fromJust)
 import Data.Function (fix)
 
 -- type Source m a = ConduitM () a m () -- no meaningful input or return value
@@ -120,36 +120,18 @@ dig classifier = do
 cmpFiles :: FilePath -> FilePath -> IO Bool
 cmpFiles a b = liftM2 (==) (Data.ByteString.Lazy.readFile a) (Data.ByteString.Lazy.readFile b)
 
-cmpFiles2 :: FilePath -> FilePath -> IO Bool
-cmpFiles2 a b = 
-  withBinaryFile a ReadMode $ \ha ->
-  withBinaryFile b ReadMode $ \hb ->
-   fix (\loop -> do
-     isEofA <- hIsEOF ha
-     isEofB <- hIsEOF hb
+classifyContent :: Monad m => (a -> a -> m Bool) -> [a] -> m [[a]]
+classifyContent a b = fmap (fromMaybe []) (classifyContent' a b)
 
-     if | isEofA && isEofB -> return True             -- both files reached EOF
-        | isEofA || isEofB -> return False            -- only one reached EOF
-        | otherwise        -> do                      -- read content
-                                x <- hGet ha 4028     -- TODO: How to use a constant?
-                                y <- hGet hb 4028     -- TODO: How to use a constant?
-                                if x /= y
-                                  then return False   -- different content
-                                  else loop           -- same content, contunue...
-   )
-
-
-
-
-
-classifyContent :: Monad m => (a -> a -> m Bool) -> [a] -> m (Maybe [[a]])
+classifyContent' :: Monad m => (a -> a -> m Bool) -> [a] -> m (Maybe [[a]])
+--classifyContent' :: (FilePath -> FilePath -> IO Bool) -> [FilePath] -> IO (Maybe [[FilePath]])
 -- TODO: Investigate Monad vs Applicative
-classifyContent          _ []       = return Nothing
-classifyContent          _ [e]      = return $ Just [[e]]
-classifyContent classifier elements = do
+classifyContent'          _ []       = return Nothing
+classifyContent'          _ [e]      = return $ Just [[e]]
+classifyContent' classifier elements = do
   (equal, different) <- accumulate (head elements) elements ([], [])
 
-  classifyContent classifier different >>= \case
+  classifyContent' classifier different >>= \case
     Nothing     -> return $ Just [equal]
     Just more -> return $ Just (equal : more)
 

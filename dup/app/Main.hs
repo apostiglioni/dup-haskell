@@ -83,26 +83,26 @@ data Cluster a b = Cluster {
                       }
     deriving (Show)
 
+
 dig :: (FilePath -> IO Partitioner) -> ConduitM (Cluster Partitioner FileData) (Cluster Partitioner FileData) IO ()
 dig classifier = do
   maybeCluster <- await
   case maybeCluster of
     Nothing -> return ()
-    Just ( Cluster clusterKey clusterValue )
-      -- TODO: should not compare to one, but if the size of clustervalue is
-      --       different to the size of the categorized data
-      -- TODO: Complete function, handle all cases
-      | length clusterValue == 1 -> do
+    Just ( Cluster clusterKey clusterValue ) -> do
+      -- TODO: (classifier . path) --> should not be composed here,
+      -- classifier should deal with FileData
+      categories <- liftIO $ classifyM (classifier . path) clusterValue
+      if (length clusterValue == Map.size categories)
+        then do
           yield $ Cluster clusterKey clusterValue
           dig classifier
-      | length clusterValue > 1 -> do
-          -- TODO: (classifier . path) --> should not be composed here,
-          -- classifier should deal with FileData
-          categories <- liftIO $ classifyM (classifier . path) clusterValue
+        else do
           yieldCategories clusterKey categories
           dig classifier
   where
     yieldCategories clusterKey = Map.traverseWithKey (\key value -> yield $ Cluster (key : clusterKey) value)
+
 
 -- digContent
 --   :: MonadIO m =>

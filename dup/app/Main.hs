@@ -1,17 +1,19 @@
 -- walk2 "test" $= differentCanonicalPath $= getStatus $= gSize $= (dig md5) $$ CL.consume
 
 
+{-# LANGUAGE MultiWayIf #-}
+
 module Main where
 
 import Lib
 --import Pipes
 --import qualified Pipes.Prelude as PP
 --import qualified Pipes.ByteString as PB
-import Control.Monad (forM_, unless, when)
+import Control.Monad (forM_, unless, when, liftM2, liftM)
 import System.Directory (doesDirectoryExist, getDirectoryContents, canonicalizePath)
 import System.Environment (getArgs)
 import System.FilePath ((</>))
-import System.IO (withFile, IOMode(ReadMode), isEOF)
+import System.IO (IOMode(ReadMode), hIsEOF, withBinaryFile)
 import Crypto.Hash (Digest, hashInitWith, hashUpdate, hashFinalize, Context, hash)
 import Crypto.Hash.Algorithms --(MD5)
 import Control.Monad.IO.Class (liftIO, MonadIO)
@@ -19,6 +21,7 @@ import qualified Data.Set as Set
 import qualified Data.Map.Strict as Map
 import System.Posix
 import Data.Maybe (fromMaybe)
+import Data.Function (fix)
 
 -- type Source m a = ConduitM () a m () -- no meaningful input or return value
 -- type Conduit a m b = ConduitM a b m () -- no meaningful return value
@@ -31,6 +34,8 @@ import Data.List (mapAccumL)
 import qualified Data.Conduit.List as CL
 
 import Text.Printf (printf)
+
+import Data.ByteString.Lazy (hGet)
 
 
 --walk :: FilePath -> Source IO FilePath
@@ -110,8 +115,34 @@ dig categorizer = do
   where
     yieldCategories clusterKey = Map.traverseWithKey (\key value -> yield $ Cluster (D key : clusterKey) value)
 
-  
-  
+
+cmpFiles :: FilePath -> FilePath -> IO Bool
+cmpFiles a b = liftM2 (==) (readFile a) (readFile b)
+
+cmpFiles2 :: FilePath -> FilePath -> IO Bool
+cmpFiles2 a b = withBinaryFile a ReadMode $ \ha ->
+               withBinaryFile b ReadMode $ \hb ->
+                 fix (\loop -> do
+                   isEofA <- hIsEOF ha
+                   isEofB <- hIsEOF hb
+
+                   if | isEofA && isEofB -> return True             -- both files reached EOF
+                      | isEofA || isEofB -> return False            -- only one reached EOF
+                      | otherwise        -> do                      -- read content
+                                              x <- hGet ha 4028     -- TODO: How to use a constant?
+                                              y <- hGet hb 4028     -- TODO: How to use a constant?
+                                              if x /= y
+                                                then return False   -- different content
+                                                else loop           -- same content, contunue...
+                 )
+
+-- categorizeContent :: (Monad m, Ord k) => [FilePath] -> IO (Map.Map FilePath -> [FilePath])
+-- categorizeContent = loop Map.empty
+--   where
+--     loop acc [] = return ac
+--     loop acc (x : xs) = do
+
+
 
 categorizeM :: (Monad m, Ord k) => (a -> m k) -> [a] -> m (Map.Map k [a])
 categorizeM categorizer = loop Map.empty
@@ -154,7 +185,7 @@ getStatus = do
 -----   case maybeCluster of
 -----     Nothing -> return ()
 -----     Just (Cluster clusterKey clusterValue) -> do
-      
+
 
 
 --gMD5 :: Conduit FileDataCluster IO FileDataCluster

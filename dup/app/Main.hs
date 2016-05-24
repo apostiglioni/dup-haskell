@@ -1,5 +1,4 @@
--- walk2 "test" $= differentCanonicalPath $= getStatus $= gSize $= (dig md5) $$ CL.consume
-
+-- walk2 "test" $= differentCanonicalPath $= getStatus $= gSize $= (dig md5) $= (digContent cmpFilesData)$$ CL.consume
 
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE LambdaCase #-}
@@ -70,6 +69,7 @@ instance Show FileData where
 -- and FileSize and Digest would be instances uf the Partitioner class
 data Partitioner = FileSize FileOffset --FileSize
                  | D (Digest MD5) -- TODO: There must be a way to generalize MD5
+                 | Content
     deriving (Show, Ord, Eq)
 
 --data Partitioner = Partitioner {
@@ -110,18 +110,45 @@ dig classifier = do
           yield $ Cluster clusterKey clusterValue
           dig classifier
       | length clusterValue > 1 -> do
+          -- TODO: (classifier . path) --> should not be composed here,
+          -- classifier should deal with FileData
           categories <- liftIO $ classifyM (classifier . path) clusterValue
           yieldCategories clusterKey categories
           dig classifier
   where
     yieldCategories clusterKey = Map.traverseWithKey (\key value -> yield $ Cluster (D key : clusterKey) value)
 
+-- digContent
+--   :: MonadIO m =>
+--        (FilePath -> FileData -> IO Bool)
+--             -> ConduitM
+--                       (Cluster Partitioner FileData) (Cluster Partitioner FileData) m ()
+digContent classifier = do
+  maybeCluster <- await
+  case maybeCluster of
+    Nothing -> return ()
+    Just ( Cluster clusterKey clusterValue )
+      -- TODO: should not compare to one, but if the size of clustervalue is
+      --       different to the size of the categorized data
+      -- TODO: Complete function, handle all cases
+      | length clusterValue == 1 -> do
+          yield $ Cluster clusterKey clusterValue
+          digContent classifier
+      | length clusterValue > 1 -> do
+          categories <- liftIO $ classifyContent classifier clusterValue
+          yieldCategories clusterKey categories
+          digContent classifier
+  where
+    yieldCategories clusterKey = mapM_ (\value -> yield $ Cluster (Content : clusterKey) value)
+
+cmpFilesData :: FileData -> FileData -> IO Bool
+cmpFilesData a b = cmpFiles (path a) (path b)
 
 cmpFiles :: FilePath -> FilePath -> IO Bool
 cmpFiles a b = liftM2 (==) (Data.ByteString.Lazy.readFile a) (Data.ByteString.Lazy.readFile b)
 
 classifyContent :: Monad m => (a -> a -> m Bool) -> [a] -> m [[a]]
-classifyContent a b = fmap (fromMaybe []) (classifyContent' a b)
+classifyContent classifier list = fmap (fromMaybe []) (classifyContent' classifier list)
 
 classifyContent' :: Monad m => (a -> a -> m Bool) -> [a] -> m (Maybe [[a]])
 --classifyContent' :: (FilePath -> FilePath -> IO Bool) -> [FilePath] -> IO (Maybe [[FilePath]])

@@ -2,6 +2,7 @@
 
 
 {-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE LambdaCase #-}
 
 module Main where
 
@@ -97,7 +98,7 @@ dig :: (MonadIO m) =>
 -- (Ord k, Control.Monad.IO.Class.MonadIO m) =>
 --      (FilePath -> IO k)
 --           -> ConduitM (Cluster a FileData) (Cluster a FileData) m ()
-dig categorizer = do
+dig classifier = do
   maybeCluster <- await
   case maybeCluster of
     Nothing -> return ()
@@ -107,11 +108,11 @@ dig categorizer = do
       -- TODO: Complete function, handle all cases
       | length clusterValue == 1 -> do
           yield $ Cluster clusterKey clusterValue
-          dig categorizer
+          dig classifier
       | length clusterValue > 1 -> do
-          categories <- liftIO $ categorizeM (categorizer . path) clusterValue
+          categories <- liftIO $ classifyM (classifier . path) clusterValue
           yieldCategories clusterKey categories
-          dig categorizer
+          dig classifier
   where
     yieldCategories clusterKey = Map.traverseWithKey (\key value -> yield $ Cluster (D key : clusterKey) value)
 
@@ -120,122 +121,65 @@ cmpFiles :: FilePath -> FilePath -> IO Bool
 cmpFiles a b = liftM2 (==) (Data.ByteString.Lazy.readFile a) (Data.ByteString.Lazy.readFile b)
 
 cmpFiles2 :: FilePath -> FilePath -> IO Bool
-cmpFiles2 a b = withBinaryFile a ReadMode $ \ha ->
-               withBinaryFile b ReadMode $ \hb ->
-                 fix (\loop -> do
-                   isEofA <- hIsEOF ha
-                   isEofB <- hIsEOF hb
+cmpFiles2 a b = 
+  withBinaryFile a ReadMode $ \ha ->
+  withBinaryFile b ReadMode $ \hb ->
+   fix (\loop -> do
+     isEofA <- hIsEOF ha
+     isEofB <- hIsEOF hb
 
-                   if | isEofA && isEofB -> return True             -- both files reached EOF
-                      | isEofA || isEofB -> return False            -- only one reached EOF
-                      | otherwise        -> do                      -- read content
-                                              x <- hGet ha 4028     -- TODO: How to use a constant?
-                                              y <- hGet hb 4028     -- TODO: How to use a constant?
-                                              if x /= y
-                                                then return False   -- different content
-                                                else loop           -- same content, contunue...
-                 )
-
-
-
-
-
-categorizeContent2 :: [FilePath] -> IO (Maybe [[FilePath]])
-categorizeContent2 [] = return Nothing
-categorizeContent2 [e] = return $ Just [[e]]
-categorizeContent2 elements = do
-  let p = loop (head elements) elements ([], [])
-
-  (x, y) <- p
-
-  h <- categorizeContent2 y
-  case h of
-    Nothing -> return $ Just [x]
-    Just hh -> return $ Just (x : hh)
+     if | isEofA && isEofB -> return True             -- both files reached EOF
+        | isEofA || isEofB -> return False            -- only one reached EOF
+        | otherwise        -> do                      -- read content
+                                x <- hGet ha 4028     -- TODO: How to use a constant?
+                                y <- hGet hb 4028     -- TODO: How to use a constant?
+                                if x /= y
+                                  then return False   -- different content
+                                  else loop           -- same content, contunue...
+   )
 
 
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-categorizeContent :: [FilePath] -> IO [[FilePath]]
-categorizeContent [] = return [[]]
-categorizeContent [e] = return [[e]]
-categorizeContent elements = do
-  --- element :: FilePath
-  --- others :: [FilePath] 
-  let element:others = elements
-
-  --- p :: IO ([FilePath], [FilePath]) 
---  let p = loop element others ([], [])
-  let p = loop (head elements) elements ([], [])
---
---  --- pa :: IO [([FilePath], [FilePath])]
---  let pa = fmap (flip (:) $ []) p
---
---  --- pb :: IO [([FilePath], [FilePath])]
---  let pb = sequence [p]
-
-  (x, y) <- p
-
-  h <- categorizeContent y
-  print "-----------------"
-  print $ "x:" ++ (show x)
-  print "-----"
-  print $ "y:" ++ (show y)
-  print "-----"
-  print $ "h:" ++ (show h)
-  print "-----"
-  print $ "x:h" ++ (show (x : h))
-  print "-----------------"
-  
-  return (x : h)
- 
-  
-  
---  let r = return [(equal, diff)]
---  return [(equal, diff)] :: IO [([FilePath],[FilePath])]
-
---  return equal : (fst $ categorizeContent diff)
---  where
-loop :: FilePath -> [FilePath] -> ([FilePath], [FilePath]) -> IO ([FilePath], [FilePath])
-loop file [] (eq, df) = return (eq, df)
-loop file (other:rest) (eq, df) = do
-  isEqual <- cmpFiles file other
-  if isEqual
-    then loop file rest (other:eq, df)
-    else loop file rest (eq, other:df)
-
-
-categorizeM :: (Monad m, Ord k) => (a -> m k) -> [a] -> m (Map.Map k [a])
-categorizeM categorizer = loop Map.empty
+classifyContent :: Monad m => (a -> a -> m Bool) -> [a] -> m (Maybe [[a]])
 -- TODO: Investigate Monad vs Applicative
--- TODO: Generalize list to Traversable
+classifyContent          _ []       = return Nothing
+classifyContent          _ [e]      = return $ Just [[e]]
+classifyContent classifier elements = do
+  (equal, different) <- accumulate (head elements) elements ([], [])
+
+  classifyContent classifier different >>= \case
+    Nothing     -> return $ Just [equal]
+    Just more -> return $ Just (equal : more)
+
+  where
+--    accumulate :: FilePath -> [FilePath] -> ([FilePath], [FilePath]) -> IO ([FilePath], [FilePath])
+    accumulate file [] (eq, df)           = return (eq, df)
+    accumulate file (other:rest) (eq, df) = do
+      isEqual <- classifier file other
+      if isEqual
+        then accumulate file rest (other:eq, df)
+        else accumulate file rest (eq, other:df)
+
+
+classifyM :: (Monad m, Ord k) => (a -> m k) -> [a] -> m (Map.Map k [a])
+-- TODO: Investigate Monad vs Applicative
+classifyM classifier = loop Map.empty
   where
     loop acc [] = return acc
     loop acc (x : xs) = do
-      category <- categorizer x
+      category <- classifier x
       let members = fromMaybe [] (Map.lookup category acc)
       loop (Map.insert category (x : members) acc) xs
 
 
-categorize :: Ord k => (a -> k) -> [a] -> Map.Map k [a]
-categorize categorizer = loop Map.empty
+classify :: Ord k => (a -> k) -> [a] -> Map.Map k [a]
+classify classifier = loop Map.empty
   where
     loop acc [] = acc
     loop acc (x : xs) = do
-      let category = categorizer x
+      let category = classifier x
       let members = fromMaybe [] (Map.lookup category acc)
       loop (Map.insert category (x : members) acc) xs
 

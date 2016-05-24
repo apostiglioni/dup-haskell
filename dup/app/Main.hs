@@ -35,7 +35,7 @@ import qualified Data.Conduit.List as CL
 
 import Text.Printf (printf)
 
-import Data.ByteString.Lazy (hGet)
+import Data.ByteString.Lazy (hGet, readFile)
 
 
 --walk :: FilePath -> Source IO FilePath
@@ -117,7 +117,7 @@ dig categorizer = do
 
 
 cmpFiles :: FilePath -> FilePath -> IO Bool
-cmpFiles a b = liftM2 (==) (readFile a) (readFile b)
+cmpFiles a b = liftM2 (==) (Data.ByteString.Lazy.readFile a) (Data.ByteString.Lazy.readFile b)
 
 cmpFiles2 :: FilePath -> FilePath -> IO Bool
 cmpFiles2 a b = withBinaryFile a ReadMode $ \ha ->
@@ -136,12 +136,86 @@ cmpFiles2 a b = withBinaryFile a ReadMode $ \ha ->
                                                 else loop           -- same content, contunue...
                  )
 
--- categorizeContent :: (Monad m, Ord k) => [FilePath] -> IO (Map.Map FilePath -> [FilePath])
--- categorizeContent = loop Map.empty
---   where
---     loop acc [] = return ac
---     loop acc (x : xs) = do
 
+
+
+
+categorizeContent2 :: [FilePath] -> IO (Maybe [[FilePath]])
+categorizeContent2 [] = return Nothing
+categorizeContent2 [e] = return $ Just [[e]]
+categorizeContent2 elements = do
+  let p = loop (head elements) elements ([], [])
+
+  (x, y) <- p
+
+  h <- categorizeContent2 y
+  case h of
+    Nothing -> return $ Just [x]
+    Just hh -> return $ Just (x : hh)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+categorizeContent :: [FilePath] -> IO [[FilePath]]
+categorizeContent [] = return [[]]
+categorizeContent [e] = return [[e]]
+categorizeContent elements = do
+  --- element :: FilePath
+  --- others :: [FilePath] 
+  let element:others = elements
+
+  --- p :: IO ([FilePath], [FilePath]) 
+--  let p = loop element others ([], [])
+  let p = loop (head elements) elements ([], [])
+--
+--  --- pa :: IO [([FilePath], [FilePath])]
+--  let pa = fmap (flip (:) $ []) p
+--
+--  --- pb :: IO [([FilePath], [FilePath])]
+--  let pb = sequence [p]
+
+  (x, y) <- p
+
+  h <- categorizeContent y
+  print "-----------------"
+  print $ "x:" ++ (show x)
+  print "-----"
+  print $ "y:" ++ (show y)
+  print "-----"
+  print $ "h:" ++ (show h)
+  print "-----"
+  print $ "x:h" ++ (show (x : h))
+  print "-----------------"
+  
+  return (x : h)
+ 
+  
+  
+--  let r = return [(equal, diff)]
+--  return [(equal, diff)] :: IO [([FilePath],[FilePath])]
+
+--  return equal : (fst $ categorizeContent diff)
+--  where
+loop :: FilePath -> [FilePath] -> ([FilePath], [FilePath]) -> IO ([FilePath], [FilePath])
+loop file [] (eq, df) = return (eq, df)
+loop file (other:rest) (eq, df) = do
+  isEqual <- cmpFiles file other
+  if isEqual
+    then loop file rest (other:eq, df)
+    else loop file rest (eq, other:df)
 
 
 categorizeM :: (Monad m, Ord k) => (a -> m k) -> [a] -> m (Map.Map k [a])

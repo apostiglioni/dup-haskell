@@ -84,15 +84,13 @@ data Cluster a b = Cluster {
     deriving (Show)
 
 
-dig :: (FilePath -> IO Partitioner) -> ConduitM (Cluster Partitioner FileData) (Cluster Partitioner FileData) IO ()
+dig :: (FileData -> IO Partitioner) -> ConduitM (Cluster Partitioner FileData) (Cluster Partitioner FileData) IO ()
 dig classifier = do
   maybeCluster <- await
   case maybeCluster of
     Nothing -> return ()
     Just ( Cluster clusterKey clusterValue ) -> do
-      -- TODO: (classifier . path) --> should not be composed here,
-      -- classifier should deal with FileData
-      categories <- liftIO $ classifyM (classifier . path) clusterValue
+      categories <- liftIO $ classifyM classifier clusterValue
       if (length clusterValue == Map.size categories)
         then do
           yield $ Cluster clusterKey clusterValue
@@ -294,8 +292,12 @@ main = do
 ----  In the second argument of ‘(>>)’, namely ‘print’
 ----  In a stmt of a 'do' block: hashFile "dup.cabal" >> print
 
---md5 :: FilePath -> IO (Digest MD5)
-md5 :: MonadIO m => FilePath -> m Partitioner
-md5 path = do
-  h <- hashFile path
-  return $ D h
+
+
+md5 :: FileData -> IO Partitioner
+-- TODO: Por que son iguales? Por que en uno return y en otro fmap
+--  md5 p = do
+--    hash <- hashFile $ path p
+--    return $ D hash
+md5 = fmap D . hashFile . path
+  

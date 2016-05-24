@@ -83,21 +83,7 @@ data Cluster a b = Cluster {
                       }
     deriving (Show)
 
-dig :: (MonadIO m) =>
-      (FilePath -> IO (Digest MD5)) -> ConduitM (Cluster Partitioner FileData) (Cluster Partitioner FileData) m ()
--- TODO: Review type. Why does it break when generalizing Digest MD5 to a type variable?
---
--- returning Map.traverseWithKey
--- Control.Monad.IO.Class.MonadIO m =>
---      (FilePath -> IO (Digest MD5))
---           -> ConduitM
---                     (Cluster Partitioner FileData) (Cluster Partitioner
---                     FileData) m ()
---
--- returning yield $ Cluster k v
--- (Ord k, Control.Monad.IO.Class.MonadIO m) =>
---      (FilePath -> IO k)
---           -> ConduitM (Cluster a FileData) (Cluster a FileData) m ()
+dig :: (FilePath -> IO Partitioner) -> ConduitM (Cluster Partitioner FileData) (Cluster Partitioner FileData) IO ()
 dig classifier = do
   maybeCluster <- await
   case maybeCluster of
@@ -116,7 +102,7 @@ dig classifier = do
           yieldCategories clusterKey categories
           dig classifier
   where
-    yieldCategories clusterKey = Map.traverseWithKey (\key value -> yield $ Cluster (D key : clusterKey) value)
+    yieldCategories clusterKey = Map.traverseWithKey (\key value -> yield $ Cluster (key : clusterKey) value)
 
 -- digContent
 --   :: MonadIO m =>
@@ -308,6 +294,8 @@ main = do
 ----  In the second argument of ‘(>>)’, namely ‘print’
 ----  In a stmt of a 'do' block: hashFile "dup.cabal" >> print
 
-md5 :: FilePath -> IO (Digest MD5)
-md5 = hashFile
-
+--md5 :: FilePath -> IO (Digest MD5)
+md5 :: MonadIO m => FilePath -> m Partitioner
+md5 path = do
+  h <- hashFile path
+  return $ D h

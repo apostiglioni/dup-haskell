@@ -85,9 +85,8 @@ data Cluster a b = Cluster {
 
 
 dig :: (FileData -> IO Partitioner) -> ConduitM (Cluster Partitioner FileData) (Cluster Partitioner FileData) IO ()
-dig classifier = do
-  maybeCluster <- await
-  case maybeCluster of
+dig classifier =
+  await >>= \case
     Nothing -> return ()
     Just ( Cluster clusterKey clusterValue ) -> do
       categories <- liftIO $ classifyM classifier clusterValue
@@ -96,34 +95,26 @@ dig classifier = do
           yield $ Cluster clusterKey clusterValue
           dig classifier
         else do
-          yieldCategories clusterKey categories
+          (`Map.traverseWithKey` categories) $ \key -> 
+            yield . Cluster (key : clusterKey)
           dig classifier
-  where
-    yieldCategories clusterKey = Map.traverseWithKey (\key value -> yield $ Cluster (key : clusterKey) value)
 
 
--- digContent
---   :: MonadIO m =>
---        (FilePath -> FileData -> IO Bool)
---             -> ConduitM
---                       (Cluster Partitioner FileData) (Cluster Partitioner FileData) m ()
-digContent classifier = do
-  maybeCluster <- await
-  case maybeCluster of
+digContent classifier =
+  await >>= \case
     Nothing -> return ()
-    Just ( Cluster clusterKey clusterValue )
-      -- TODO: should not compare to one, but if the size of clustervalue is
-      --       different to the size of the categorized data
-      -- TODO: Complete function, handle all cases
-      | length clusterValue == 1 -> do
+    Just ( Cluster clusterKey clusterValue ) -> do
+      categories <- liftIO $ classifyContent classifier clusterValue
+      if (length clusterValue == length categories)
+        then do
+          -- (yield . Cluster clusterKey) clusterValue
           yield $ Cluster clusterKey clusterValue
+          digContent classifier       -- TODO: Why can't this be put out of the if?
+        else do
+          let newKey = Content : clusterKey
+          -- yield categories as a new clusters
+          mapM_ (yield . Cluster newKey) categories
           digContent classifier
-      | length clusterValue > 1 -> do
-          categories <- liftIO $ classifyContent classifier clusterValue
-          yieldCategories clusterKey categories
-          digContent classifier
-  where
-    yieldCategories clusterKey = mapM_ (\value -> yield $ Cluster (Content : clusterKey) value)
 
 cmpFilesData :: FileData -> FileData -> IO Bool
 cmpFilesData a b = cmpFiles (path a) (path b)

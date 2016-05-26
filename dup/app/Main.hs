@@ -9,7 +9,7 @@ import Lib
 --import Pipes
 --import qualified Pipes.Prelude as PP
 --import qualified Pipes.ByteString as PB
-import Control.Monad (forM_, unless, when, liftM2, liftM)
+import Control.Monad (forM_, unless, when, liftM2, liftM, (<=<))
 import System.Directory (doesDirectoryExist, getDirectoryContents, canonicalizePath)
 import System.Environment (getArgs)
 import System.FilePath ((</>))
@@ -162,29 +162,16 @@ classify classifier = loop Map.empty
 
 type FileSummaryCluster = Cluster Partitioner FileSummary
 
+
 getStatus :: Conduit FilePath IO FileSummary
--- TODO: Implement as mapoutput
-getStatus = do
-  -- TODO : awaitForever???
-  maybePath <- await
-  case maybePath of
-    Nothing -> return ()
-    Just path -> do
-      status <- liftIO $ getFileStatus path
-      yield $ FileSummary path status
-      getStatus
+-- ^Maps a stream of FilePath to a stream of FileSummary
+-- awaitForEver $ \path -> do
+--   status <- liftIO $ getFileStatus path
+--   yield $ FileSummary path status
+--   TODO: investigate `map :: Monad m => (a -> b) -> Conduit a m b`
+getStatus = awaitForever $ \path ->
+  liftIO (getFileStatus path) >>= yield . FileSummary path
 
------ gContent :: Conduit FildeDataCluster IO FileSummaryCluster
------ gContent = do
------   maybeCluster <- await
------   case maybeCluster of
------     Nothing -> return ()
------     Just (Cluster clusterKey clusterValue) -> do
-
-
-
---gMD5 :: Conduit FileSummaryCluster IO FileSummaryCluster
---gMD5 = dig md5
 
 gSize :: Conduit FileSummary IO FileSummaryCluster
 gSize = conduit Map.empty

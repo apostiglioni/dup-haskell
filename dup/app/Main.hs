@@ -50,7 +50,7 @@ data Partitioner = FileSize FileOffset --FileSize
 
 data Cluster a b = Cluster {
                      key   :: [a]
-                   , value :: [b]
+                   , content :: [b]
                    }
                    deriving (Show)
 
@@ -183,7 +183,7 @@ gSize = conduit Map.empty
             -- Map.insert size (fromMaybe (...) (...))
             Nothing -> conduit $ Map.insert size (Cluster [FileSize size] [fileData]) map
             Just cluster ->
-              let newCluster = Cluster (key cluster) (fileData : (value cluster)) in
+              let newCluster = Cluster (key cluster) (fileData : (content cluster)) in
               conduit $ Map.insert size newCluster map
         Nothing -> do
           traverse yield map

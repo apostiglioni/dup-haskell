@@ -1,4 +1,4 @@
--- walk2 "test" $= differentCanonicalPath $= getStatus $= gSize $= (dig md5) $= (digContent cmpFilesData)$$ CL.consume
+-- walk2 "test" $= prune $= getStatus $= gSize $= (dig md5) $= (digContent cmpFilesData)$$ CL.consume
 
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE LambdaCase #-}
@@ -163,6 +163,7 @@ classify classifier = loop Map.empty
 type FileSummaryCluster = Cluster Partitioner FileSummary
 
 getStatus :: Conduit FilePath IO FileSummary
+-- TODO: Implement as mapoutput
 getStatus = do
   -- TODO : awaitForever???
   maybePath <- await
@@ -209,31 +210,24 @@ gSize = conduit Map.empty
           return ()
 
 
-
-differentCanonicalPath :: Conduit FilePath IO FilePath
-differentCanonicalPath = conduit Set.empty
+prune :: Conduit FilePath IO FilePath
+-- ^Prunes files with the same cannonical path.
+prune = conduit Set.empty
+  -- TODO: Se puede usar un monad en vez de inventar una funcion que recibe un
+  -- parametro mas para mantener el estado???
   where
     conduit :: Set.Set FilePath -> Conduit FilePath IO FilePath
-    conduit set = do
-      maybePath <- await
-      case maybePath of
+    conduit set = 
+      await >>= \case
         Nothing -> return ()
         Just path -> do
           canonicalPath <- liftIO $ canonicalizePath path
-          if (Set.member canonicalPath set)
+          if (canonicalPath `Set.member` set)
             then conduit set
             else do
               yield path
               conduit $ Set.insert canonicalPath set
 
-
---
--- walk2 "test/.test-data" $= differentCanonicalPath $= hashPipe $= conduitPrint
--- $$ CL.consume
---
-
--- sinkPrint :: Sink (FileHash MD5) IO ()
--- sinkPrint = CL.mapM_ $ print
 
 sinkPutStrLn :: Sink String IO () -- consumes a stream of Strings, no result
 sinkPutStrLn = CL.mapM_ putStrLn

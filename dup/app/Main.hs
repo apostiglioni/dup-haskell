@@ -1,4 +1,4 @@
--- walk2 "test" $= prune $= getStatus $= gSize $= (dig md5) $= (digContent cmpFilesData)$$ CL.consume
+-- walk2 "test" $= prune $= mapSummary $= gSize $= (dig md5) $= (digContent cmpFilesData)$$ CL.consume
 
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE LambdaCase #-}
@@ -163,13 +163,13 @@ classify classifier = loop Map.empty
 type FileSummaryCluster = Cluster Partitioner FileSummary
 
 
-getStatus :: Conduit FilePath IO FileSummary
+mapSummary :: Conduit FilePath IO FileSummary
 -- ^Maps a stream of FilePath to a stream of FileSummary
 -- awaitForEver $ \path -> do
 --   status <- liftIO $ getFileStatus path
 --   yield $ FileSummary path status
 --   TODO: investigate `map :: Monad m => (a -> b) -> Conduit a m b`
-getStatus = awaitForever $ \path ->
+mapSummary = awaitForever $ \path ->
   liftIO (getFileStatus path) >>= yield . FileSummary path
 
 

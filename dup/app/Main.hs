@@ -53,29 +53,21 @@ walk2 topPath = do
       then walk2 path
       else yield path
 
-data FileData = FileData {
+data FileSummary = FileSummary {
                   path   :: FilePath
                 , status :: FileStatus
                 }
 
-instance Show FileData where
+instance Show FileSummary where
   --show fileData = "{ path='" ++ (path fileData) ++ "' }"
   show fileData = printf "{ path='%s' }" (path fileData)
 
---type FileSize = FileOffset
-
-
--- TODO: Partitioner could be a class defining the methods name and partition,
--- and FileSize and Digest would be instances uf the Partitioner class
 data Partitioner = FileSize FileOffset --FileSize
                  | D (Digest MD5) -- TODO: There must be a way to generalize MD5
                  | Content
     deriving (Show, Ord, Eq)
 
---data Partitioner = Partitioner {
---                   name      :: String
---                 , partition :: PartitionMethod
---                 } deriving (Show)
+type ClusterKey = [Partitioner]
 
 data Cluster a b = Cluster {
                         key   :: [a]
@@ -84,7 +76,7 @@ data Cluster a b = Cluster {
     deriving (Show)
 
 
-dig :: (FileData -> IO Partitioner) -> ConduitM (Cluster Partitioner FileData) (Cluster Partitioner FileData) IO ()
+dig :: (FileSummary -> IO Partitioner) -> ConduitM (Cluster Partitioner FileSummary) (Cluster Partitioner FileSummary) IO ()
 dig classifier =
   await >>= \case
     Nothing -> return ()
@@ -116,7 +108,7 @@ digContent classifier =
           mapM_ (yield . Cluster newKey) categories
           digContent classifier
 
-cmpFilesData :: FileData -> FileData -> IO Bool
+cmpFilesData :: FileSummary -> FileSummary -> IO Bool
 cmpFilesData a b = cmpFiles (path a) (path b)
 
 cmpFiles :: FilePath -> FilePath -> IO Bool
@@ -168,9 +160,9 @@ classify classifier = loop Map.empty
       loop (Map.insert category (x : members) acc) xs
 
 
-type FileDataCluster = Cluster Partitioner FileData
+type FileSummaryCluster = Cluster Partitioner FileSummary
 
-getStatus :: Conduit FilePath IO FileData
+getStatus :: Conduit FilePath IO FileSummary
 getStatus = do
   -- TODO : awaitForever???
   maybePath <- await
@@ -178,10 +170,10 @@ getStatus = do
     Nothing -> return ()
     Just path -> do
       status <- liftIO $ getFileStatus path
-      yield $ FileData path status
+      yield $ FileSummary path status
       getStatus
 
------ gContent :: Conduit FildeDataCluster IO FileDataCluster
+----- gContent :: Conduit FildeDataCluster IO FileSummaryCluster
 ----- gContent = do
 -----   maybeCluster <- await
 -----   case maybeCluster of
@@ -190,13 +182,13 @@ getStatus = do
 
 
 
---gMD5 :: Conduit FileDataCluster IO FileDataCluster
+--gMD5 :: Conduit FileSummaryCluster IO FileSummaryCluster
 --gMD5 = dig md5
 
-gSize :: Conduit FileData IO FileDataCluster
+gSize :: Conduit FileSummary IO FileSummaryCluster
 gSize = conduit Map.empty
   where
-    conduit :: Map.Map FileOffset FileDataCluster -> Conduit FileData IO FileDataCluster
+    conduit :: Map.Map FileOffset FileSummaryCluster -> Conduit FileSummary IO FileSummaryCluster
     conduit map = do
       maybeData <- await
       case maybeData of
@@ -285,7 +277,7 @@ main = do
 
 
 
-md5 :: FileData -> IO Partitioner
+md5 :: FileSummary -> IO Partitioner
 -- TODO: Por que son iguales? Por que en uno return y en otro fmap
 --  md5 p = do
 --    hash <- hashFile $ path p

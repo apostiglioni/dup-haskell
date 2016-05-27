@@ -4,6 +4,7 @@
 module Main where
 
 import Lib
+import Category
 import Control.Monad (forM_, unless, when, liftM2, liftM, (<=<))
 import System.Directory (doesDirectoryExist, getDirectoryContents, canonicalizePath)
 import System.Environment (getArgs)
@@ -74,8 +75,27 @@ walk2 topPath = do
       then walk2 path
       else yield path
 
+-- 
+-- type CategoryClassifierM a m k = a -> m k   -- TODO (Monad m, Ord k) =>
+-- classifyM :: (Monad m, Ord k) => CategoryClassifierM a m k -> [a] -> m (Map.Map k [a])
+-- classifyM :: (Monad m, Ord k) => CategoryClassifierM a m k -> [a] -> m [(k, [a])]
+-- 
+-- type ComparingClassifierM a m = a -> a -> m Bool
+-- classifyContent :: Monad m => ComparingClassifierM a m -> [a] -> m [[a]]
+-- 
+-- 
+-- class Dig t where
+--   classify :: (Traversable t, Monad m) => [a] -> m t [c]  -- >--- esto reemplaza a classifyM y classifyContent
+--   map :: c -> b -> Cluster a b   -- ---> esto reemplaza a la creacion del cluster
+-- 
 
-dig :: (FileSummary -> IO Partitioner) -> Conduit FileSummaryCluster IO FileSummaryCluster
+-- class Dig t where
+--   classify :: (Traversable t, Monad m) => [a] -> m t [b]  -- >--- esto reemplaza a classifyM y classifyContent
+--   map :: a -> b -> Cluster a b   -- ---> esto reemplaza a la creacion del cluster
+-- 
+
+
+dig :: CategoryClassifierM FileSummary IO Partitioner -> Conduit (Cluster Partitioner FileSummary) IO (Cluster Partitioner FileSummary) 
 dig classifier =
   await >>= \case
     Nothing -> return ()
@@ -86,11 +106,10 @@ dig classifier =
           yield $ Cluster clusterKey clusterValue
           dig classifier
         else do
-          (`Map.traverseWithKey` categories) $ \key ->
-            yield . Cluster (key : clusterKey)
+          (`Map.traverseWithKey` categories) $ \key -> yield . Cluster (key : clusterKey)
           dig classifier
 
-digContent :: (FileSummary -> FileSummary -> IO Bool) -> Conduit FileSummaryCluster IO FileSummaryCluster
+digContent :: ComparingClassifierM FileSummary IO -> Conduit (Cluster Partitioner FileSummary) IO (Cluster Partitioner FileSummary)
 digContent classifier =
   await >>= \case
     Nothing -> return ()
@@ -98,13 +117,10 @@ digContent classifier =
       categories <- liftIO $ classifyContent classifier clusterValue
       if (length clusterValue == length categories)
         then do
-          -- (yield . Cluster clusterKey) clusterValue
           yield $ Cluster clusterKey clusterValue
           digContent classifier       -- TODO: Why can't this be put out of the if?
         else do
-          let newKey = Content : clusterKey
-          -- yield categories as a new clusters
-          mapM_ (yield . Cluster newKey) categories
+          mapM_ (yield . Cluster (Content : clusterKey)) categories    -- yield categories as a new clusters
           digContent classifier
 
 cmpFilesData :: FileSummary -> FileSummary -> IO Bool
@@ -112,51 +128,6 @@ cmpFilesData a b = cmpFiles (path a) (path b)
 
 cmpFiles :: FilePath -> FilePath -> IO Bool
 cmpFiles a b = liftM2 (==) (Data.ByteString.Lazy.readFile a) (Data.ByteString.Lazy.readFile b)
-
-classifyContent :: Monad m => (a -> a -> m Bool) -> [a] -> m [[a]]
-classifyContent classifier list = fmap (fromMaybe []) (classifyContent' classifier list)
-
-classifyContent' :: Monad m => (a -> a -> m Bool) -> [a] -> m (Maybe [[a]])
---classifyContent' :: (FilePath -> FilePath -> IO Bool) -> [FilePath] -> IO (Maybe [[FilePath]])
--- TODO: Investigate Monad vs Applicative
-classifyContent'          _ []       = return Nothing
-classifyContent'          _ [e]      = return $ Just [[e]]
-classifyContent' classifier elements = do
-  (equal, different) <- accumulate (head elements) elements ([], [])
-
-  classifyContent' classifier different >>= \case
-    Nothing     -> return $ Just [equal]
-    Just more -> return $ Just (equal : more)
-
-  where
---    accumulate :: FilePath -> [FilePath] -> ([FilePath], [FilePath]) -> IO ([FilePath], [FilePath])
-    accumulate file [] (eq, df)           = return (eq, df)
-    accumulate file (other:rest) (eq, df) = do
-      isEqual <- classifier file other
-      if isEqual
-        then accumulate file rest (other:eq, df)
-        else accumulate file rest (eq, other:df)
-
-
-classifyM :: (Monad m, Ord k) => (a -> m k) -> [a] -> m (Map.Map k [a])
--- TODO: Investigate Monad vs Applicative
-classifyM classifier = loop Map.empty
-  where
-    loop acc [] = return acc
-    loop acc (x : xs) = do
-      category <- classifier x
-      let members = fromMaybe [] (Map.lookup category acc)
-      loop (Map.insert category (x : members) acc) xs
-
-
-classify :: Ord k => (a -> k) -> [a] -> Map.Map k [a]
-classify classifier = loop Map.empty
-  where
-    loop acc [] = acc
-    loop acc (x : xs) = do
-      let category = classifier x
-      let members = fromMaybe [] (Map.lookup category acc)
-      loop (Map.insert category (x : members) acc) xs
 
 
 mapSummary :: Conduit FilePath IO FileSummary
@@ -209,8 +180,9 @@ prune = conduit Set.empty
               yield path
               conduit $ Set.insert canonicalPath set
 
-
-md5 :: FileSummary -> IO Partitioner
+md5 :: CategoryClassifierM FileSummary IO Partitioner
+-- ^md5 :: FileSummary -> IO Partitioner
+--
 -- TODO: Por que son iguales? Por que en uno return y en otro fmap
 --  md5 p = do
 --    hash <- hashFile $ path p

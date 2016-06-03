@@ -1,11 +1,15 @@
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE LambdaCase #-}
 
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE FlexibleContexts #-}
+
 module Main where
 
 import Lib
 import Category
-import Control.Monad (forM_, unless, when, liftM2, liftM, (<=<))
+import Control.Monad (forM_, unless, when, liftM2, liftM, (<=<), guard)
 import System.Directory (doesDirectoryExist, getDirectoryContents, canonicalizePath)
 import System.Environment (getArgs)
 import System.FilePath ((</>))
@@ -13,16 +17,16 @@ import System.IO (IOMode(ReadMode), hIsEOF, withBinaryFile)
 import Crypto.Hash (Digest, hashInitWith, hashUpdate, hashFinalize, Context, hash)
 import Crypto.Hash.Algorithms --(MD5)
 import Control.Monad.IO.Class (liftIO, MonadIO)
+import Control.Applicative (liftA2)
 import qualified Data.Set as Set
 import qualified Data.Map.Strict as Map
 import System.Posix
 import Data.Maybe (fromMaybe, fromJust)
-import Data.Function (fix)
+import Data.Function (fix, on)
 
 -- type Source m a = ConduitM () a m () -- no meaningful input or return value
 -- type Conduit a m b = ConduitM a b m () -- no meaningful return value
 -- type Sink a m b = ConduitM a Void m b -- no meaningful output value
-
 
 
 import Data.Conduit
@@ -44,7 +48,7 @@ instance Show FileSummary where
 
 
 data Partitioner = FileSize FileOffset --FileSize
-                 | D (Digest MD5) -- TODO: There must be a way to generalize MD5
+                 | MD5Digest (Digest MD5) -- TODO: There must be a way to generalize MD5
                  | Content
                  deriving (Show, Ord, Eq)
 
@@ -55,10 +59,6 @@ data Cluster a b = Cluster {
                    }
                    deriving (Show)
 
-
-type ClusterKey = [Partitioner]
-
-type FileSummaryCluster = Cluster Partitioner FileSummary
 
 -- walk :: FilePath -> Source IO FilePath
 -- walk path = sourceDirectoryDeep False
@@ -75,59 +75,49 @@ walk2 topPath = do
       then walk2 path
       else yield path
 
--- 
--- type CategoryClassifierM a m k = a -> m k   -- TODO (Monad m, Ord k) =>
--- classifyM :: (Monad m, Ord k) => CategoryClassifierM a m k -> [a] -> m (Map.Map k [a])
--- classifyM :: (Monad m, Ord k) => CategoryClassifierM a m k -> [a] -> m [(k, [a])]
--- 
--- type ComparingClassifierM a m = a -> a -> m Bool
--- classifyContent :: Monad m => ComparingClassifierM a m -> [a] -> m [[a]]
--- 
--- 
--- class Dig t where
---   classify :: (Traversable t, Monad m) => [a] -> m t [c]  -- >--- esto reemplaza a classifyM y classifyContent
---   map :: c -> b -> Cluster a b   -- ---> esto reemplaza a la creacion del cluster
--- 
 
--- class Dig t where
---   classify :: (Traversable t, Monad m) => [a] -> m t [b]  -- >--- esto reemplaza a classifyM y classifyContent
---   map :: a -> b -> Cluster a b   -- ---> esto reemplaza a la creacion del cluster
--- 
+class Classifier classifier k a m c 
+               | classifier -> m c
+               , c -> k
+  where
+    classify :: (Monad m) => classifier -> [a] -> m [c]
+    cluster :: classifier -> [k] -> c -> Cluster k a
 
+instance Classifier (FileSummary -> IO Partitioner) Partitioner FileSummary IO (Partitioner, [FileSummary]) where
+  classify = classifyM
+  cluster _ x (key, val) = Cluster (key : x) val
 
-dig :: CategoryClassifierM FileSummary IO Partitioner -> Conduit (Cluster Partitioner FileSummary) IO (Cluster Partitioner FileSummary) 
+instance Classifier (FileSummary -> FileSummary -> IO Bool) Partitioner FileSummary IO [FileSummary] where
+  classify = classifyBinary
+  cluster _ clusterKey = Cluster (Content : clusterKey)
+
+newtype ContentClassifier = ContentClassifier (FileSummary -> FileSummary -> IO Bool)
+instance Classifier ContentClassifier Partitioner FileSummary IO [FileSummary] where
+  classify (ContentClassifier a) = classifyBinary a
+  cluster _ clusterKey = Cluster (Content : clusterKey)
+
+dig :: (MonadIO m, Classifier classifier k a IO c) => classifier -> Conduit (Cluster k a) m (Cluster k a) -- TODO: Why do we need IO explicitely?
 dig classifier =
   await >>= \case
     Nothing -> return ()
     Just ( Cluster clusterKey clusterValue ) -> do
-      categories <- liftIO $ classifyM classifier clusterValue
-      if (length clusterValue == Map.size categories)
-        then do
-          yield $ Cluster clusterKey clusterValue
-          dig classifier
-        else do
-          (`Map.traverseWithKey` categories) $ \key -> yield . Cluster (key : clusterKey)
-          dig classifier
+      categories <- liftIO $ classify classifier clusterValue
 
-digContent :: ComparingClassifierM FileSummary IO -> Conduit (Cluster Partitioner FileSummary) IO (Cluster Partitioner FileSummary)
-digContent classifier =
-  await >>= \case
-    Nothing -> return ()
-    Just ( Cluster clusterKey clusterValue ) -> do
-      categories <- liftIO $ classifyContent classifier clusterValue
-      if (length clusterValue == length categories)
-        then do
-          yield $ Cluster clusterKey clusterValue
-          digContent classifier       -- TODO: Why can't this be put out of the if?
-        else do
-          mapM_ (yield . Cluster (Content : clusterKey)) categories    -- yield categories as a new clusters
-          digContent classifier
+      when (length clusterValue == length categories) $ 
+        yield $ Cluster clusterKey clusterValue
+
+      when (length clusterValue /= length categories) $ 
+        mapM_ (yield . (cluster classifier clusterKey)) categories
+
+      dig classifier
 
 cmpFilesData :: FileSummary -> FileSummary -> IO Bool
-cmpFilesData a b = cmpFiles (path a) (path b)
+--cmpFilesData a b = cmpFiles (path a) (path b)
+cmpFilesData = cmpFiles `on` path
 
 cmpFiles :: FilePath -> FilePath -> IO Bool
-cmpFiles a b = liftM2 (==) (Data.ByteString.Lazy.readFile a) (Data.ByteString.Lazy.readFile b)
+--cmpFiles a b = liftM2 (==) (Data.ByteString.Lazy.readFile a) (Data.ByteString.Lazy.readFile b)
+cmpFiles = liftA2 (==) `on` Data.ByteString.Lazy.readFile
 
 
 mapSummary :: Conduit FilePath IO FileSummary
@@ -140,10 +130,10 @@ mapSummary = awaitForever $ \path ->
   liftIO (getFileStatus path) >>= yield . FileSummary path
 
 
-gSize :: Conduit FileSummary IO FileSummaryCluster
+gSize :: Conduit FileSummary IO (Cluster Partitioner FileSummary)
 gSize = conduit Map.empty
   where
-    conduit :: Map.Map FileOffset FileSummaryCluster -> Conduit FileSummary IO FileSummaryCluster
+    conduit :: Map.Map FileOffset (Cluster Partitioner FileSummary) -> Conduit FileSummary IO (Cluster Partitioner FileSummary)
     conduit map =
       await >>= \case
         Just fileData ->
@@ -180,15 +170,17 @@ prune = conduit Set.empty
               yield path
               conduit $ Set.insert canonicalPath set
 
-md5 :: CategoryClassifierM FileSummary IO Partitioner
+md5 :: FileSummary -> IO Partitioner
 -- ^md5 :: FileSummary -> IO Partitioner
 --
 -- TODO: Por que son iguales? Por que en uno return y en otro fmap
 --  md5 p = do
 --    hash <- hashFile $ path p
---    return $ D hash
-md5 = fmap D . hashFile . path
+--    return $ MD5Digest hash
+md5 = fmap MD5Digest . hashFile . path
 
 
--- main :: IO ()
--- main = walk2 "test" $= prune $= mapSummary $= gSize $= (dig md5) $= (digContent cmpFilesData)$$ CL.consume
+
+main :: IO [Cluster Partitioner FileSummary]
+--main = walk2 "test" $= prune $= mapSummary $= gSize $= (dig md5) $= (dig cmpFilesData) $= (dig.ContentClassifier $ cmpFilesData) $$ CL.consume
+main = walk2 "test" $= prune $= mapSummary $= gSize $= (dig md5) $= (dig.ContentClassifier $ cmpFilesData) $$ CL.consume

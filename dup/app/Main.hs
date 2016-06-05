@@ -76,41 +76,49 @@ walk2 topPath = do
       then walk2 path
       else yield path
 
+class (Monad m) => Class m cl k a | cl -> m k a where
+  cluster :: [k] -> cl -> Cluster k a
 
-class Classifier classifier k a m c 
-               | classifier -> m c
-               , c -> k
-  where
-    classify :: (Monad m) => classifier -> [a] -> m [c]
-    cluster :: classifier -> [k] -> c -> Cluster k a
+instance Class IO [FileSummary] Partitioner FileSummary where
+  cluster = Cluster . (Content : )
 
-instance Classifier (FileSummary -> IO Partitioner) Partitioner FileSummary IO (Partitioner, [FileSummary]) where
+instance Class IO (Partitioner, [FileSummary]) Partitioner FileSummary where
+  cluster x (key, val) = Cluster (key : x) val
+
+class Classifier classifier a m c | classifier -> m c where
+  classify :: (Monad m) => classifier -> [a] -> m [c]
+
+instance Classifier (FileSummary -> IO Partitioner) FileSummary IO (Partitioner, [FileSummary]) where
   classify = classifyM
-  cluster _ x (key, val) = Cluster (key : x) val
 
-instance Classifier (FileSummary -> FileSummary -> IO Bool) Partitioner FileSummary IO (Partitioner, [FileSummary]) where
-  classify classifier = (fmap $ map (Content,)) . (classifyBinary classifier)
-  cluster _ x (key, val) = Cluster (key : x) val
+instance Classifier (FileSummary -> FileSummary -> IO Bool) FileSummary IO [FileSummary] where
+  classify = classifyBinary
 
-newtype ContentClassifier = ContentClassifier (FileSummary -> FileSummary -> IO Bool)
-instance Classifier ContentClassifier Partitioner FileSummary IO [FileSummary] where
-  classify (ContentClassifier a) = classifyBinary a
-  cluster _ clusterKey = Cluster (Content : clusterKey)
 
-dig :: (MonadIO m, Classifier classifier k a IO c) => classifier -> Conduit (Cluster k a) m (Cluster k a) -- TODO: Why do we need IO explicitely?
+--instance Classifier (FileSummary -> FileSummary -> IO Bool) FileSummary IO (Partitioner, [FileSummary]) where
+--  classify classifier = (fmap $ map (Content,)) . (classifyBinary classifier)
+--
+--newtype ConstantClassifier = ConstantClassifier (FileSummary -> FileSummary -> IO Bool)
+--instance Classifier ConstantClassifier FileSummary IO (Partitioner, [FileSummary]) where
+--  classify (ConstantClassifier classifier) = (fmap $ map (Content,)) . (classifyBinary classifier)
+
+--dig :: (MonadIO m, Classifier classifier a IO (k, [a])) => classifier -> Conduit (Cluster k a) m (Cluster k a)
 dig classifier =
   await >>= \case
     Nothing -> return ()
     Just ( Cluster clusterKey clusterValue ) -> do
       categories <- liftIO $ classify classifier clusterValue
 
-      when (length clusterValue == length categories) $ 
+      when (length clusterValue == length categories) $
         yield $ Cluster clusterKey clusterValue
 
-      when (length clusterValue /= length categories) $ 
-        mapM_ (yield . (cluster classifier clusterKey)) categories
+      when (length clusterValue /= length categories) $
+        mapM_ (yield . (cluster clusterKey)) categories
 
       dig classifier
+--  where
+--    cluster :: _
+--    cluster x (key, val) = Cluster (key : x) val
 
 cmpFilesData :: FileSummary -> FileSummary -> IO Bool
 --cmpFilesData a b = cmpFiles (path a) (path b)
@@ -183,5 +191,5 @@ md5 = fmap MD5Digest . hashFile . path
 
 
 main :: IO [Cluster Partitioner FileSummary]
---main = walk2 "test" $= prune $= mapSummary $= gSize $= (dig md5) $= (dig cmpFilesData) $= (dig.ContentClassifier $ cmpFilesData) $$ CL.consume
-main = walk2 "test" $= prune $= mapSummary $= gSize $= (dig md5) $= (dig cmpFilesData) $= (dig.ContentClassifier $ cmpFilesData) $$ CL.consume
+--main = walk2 "test" $= prune $= mapSummary $= gSize $= (dig md5) $= (dig cmpFilesData) $= (dig.ConstantClassifier $ cmpFilesData) $$ CL.consume
+main = walk2 "test" $= prune $= mapSummary $= gSize $= (dig md5) $= (dig cmpFilesData) $$ CL.consume

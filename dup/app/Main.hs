@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TupleSections #-}
 
 module Main where
 
@@ -87,9 +88,9 @@ instance Classifier (FileSummary -> IO Partitioner) Partitioner FileSummary IO (
   classify = classifyM
   cluster _ x (key, val) = Cluster (key : x) val
 
-instance Classifier (FileSummary -> FileSummary -> IO Bool) Partitioner FileSummary IO [FileSummary] where
-  classify = classifyBinary
-  cluster _ clusterKey = Cluster (Content : clusterKey)
+instance Classifier (FileSummary -> FileSummary -> IO Bool) Partitioner FileSummary IO (Partitioner, [FileSummary]) where
+  classify classifier = (fmap $ map (Content,)) . (classifyBinary classifier)
+  cluster _ x (key, val) = Cluster (key : x) val
 
 newtype ContentClassifier = ContentClassifier (FileSummary -> FileSummary -> IO Bool)
 instance Classifier ContentClassifier Partitioner FileSummary IO [FileSummary] where
@@ -183,4 +184,4 @@ md5 = fmap MD5Digest . hashFile . path
 
 main :: IO [Cluster Partitioner FileSummary]
 --main = walk2 "test" $= prune $= mapSummary $= gSize $= (dig md5) $= (dig cmpFilesData) $= (dig.ContentClassifier $ cmpFilesData) $$ CL.consume
-main = walk2 "test" $= prune $= mapSummary $= gSize $= (dig md5) $= (dig.ContentClassifier $ cmpFilesData) $$ CL.consume
+main = walk2 "test" $= prune $= mapSummary $= gSize $= (dig md5) $= (dig cmpFilesData) $= (dig.ContentClassifier $ cmpFilesData) $$ CL.consume

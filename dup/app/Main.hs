@@ -80,22 +80,31 @@ walk2 topPath = do
 class Classifier classifier k a m c 
                | classifier -> m c
                , c -> k
+               , c -> a
   where
     classify :: (Monad m) => classifier -> [a] -> m [c]
     cluster :: classifier -> [k] -> c -> Cluster k a
+    keyy :: classifier -> c -> k
+    contentt :: classifier -> c -> [a]
 
 instance Classifier (FileSummary -> IO Partitioner) Partitioner FileSummary IO (Partitioner, [FileSummary]) where
   classify = classifyM
   cluster _ x (key, val) = Cluster (key : x) val
+  keyy _ (k, _) = k
+  contentt _ (_, val) = val
 
 instance Classifier (FileSummary -> FileSummary -> IO Bool) Partitioner FileSummary IO (Partitioner, [FileSummary]) where
   classify classifier = (fmap $ map (Content,)) . (classifyBinary classifier)
   cluster _ x (key, val) = Cluster (key : x) val
+  keyy _ _ = Content
+  contentt _ (_, val) = val
 
 newtype ContentClassifier = ContentClassifier (FileSummary -> FileSummary -> IO Bool)
 instance Classifier ContentClassifier Partitioner FileSummary IO [FileSummary] where
   classify (ContentClassifier a) = classifyBinary a
   cluster _ clusterKey = Cluster (Content : clusterKey)
+  keyy _ _ = Content
+  contentt _ = id
 
 dig :: (MonadIO m, Classifier classifier k a IO c) => classifier -> Conduit (Cluster k a) m (Cluster k a) -- TODO: Why do we need IO explicitely?
 dig classifier =
@@ -108,7 +117,8 @@ dig classifier =
         yield $ Cluster clusterKey clusterValue
 
       when (length clusterValue /= length categories) $ 
-        mapM_ (yield . (cluster classifier clusterKey)) categories
+        --mapM_ (yield . (cluster classifier clusterKey)) categories
+        mapM_ (\cat -> yield $ Cluster ((keyy classifier cat) : clusterKey) (contentt classifier cat)) categories
 
       dig classifier
 

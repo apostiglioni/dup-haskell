@@ -10,7 +10,7 @@ module Main where
 
 import Lib
 import Category
-import Control.Monad (forM_, unless, when, liftM2, liftM, (<=<), guard)
+import Control.Monad (forM_, unless, when, liftM2, liftM, (<=<), guard, join)
 import System.Directory (doesDirectoryExist, getDirectoryContents, canonicalizePath)
 import System.Environment (getArgs)
 import System.FilePath ((</>))
@@ -168,7 +168,7 @@ exclude predicate = -- action =
 --      when (validate2 all) $ liftIO ( (mapM_ (action) rem))
 --      when (validate2 all) $ action remove
 --      when (validate2 all) $ yield (action remove)
-      when (validate2 all) $ yield $ (mapM (putStrLn . path) remove)
+      when (validate2 all) $ mapM_ (yield . putStrLn . path) remove
       exclude predicate -- action
 --      case validate (partition predicate d) of
 --        Just valid -> yield valid
@@ -219,7 +219,9 @@ uniques :: Conduit (Cluster Partitioner FileSummary) IO (Cluster Partitioner Fil
 uniques = CL.filter ((== 1) . length . content)
 
 --main = walk2 "test" $= prune $= mapSummary $= gSize $= (dig md5) $= (dig cmpFilesData) $= (dig.ContentClassifier $ cmpFilesData) $$ CL.consume
-main = walk2 "test"
+main =
+         join $ fmap sequence $
+         walk2 "test"
       $= prune
       $= mapSummary
       $= gSize
@@ -230,5 +232,5 @@ main = walk2 "test"
       $= uniques
 --       $= exclude (("test/Spec.hs" ==) . path) (putStrLn . path)
 --       $= exclude (("test/Spec.hs" ==) . path) (liftIO . mapM_ (putStrLn . path))
-       $= exclude (("test/Spec.hs" ==) . path) --(mapM (putStrLn . path))
+      $= exclude (("test/Spec.hs" ==) . path) --(mapM (putStrLn . path))
       $$ CL.consume

@@ -156,16 +156,23 @@ gSize = conduit Map.empty
           --Map.traverseWithKey (\k v -> yield v) map
           return ()
 
---exclude :: (Eq b, Monad m) => (b -> Bool) -> Conduit (Cluster a b) m (Cluster a b)
--- TODO: Should not return a cluster any more, and probably should not receive a
+--exclude :: (Monad m) => (FilePath -> Bool) -> Conduit (Cluster a FilePath) m (Cluster a FilePath)
+-- TODO: Probably should not receive a
 -- cluster either
-exclude predicate =
+--exclude :: (FileSummary -> Bool) -> Conduit [()] IO ()
+exclude predicate = -- action =
   await >>= \case
-    Just ( Cluster k d ) ->
-      case validate (partition predicate d) of
---        Just valid -> yield $ Cluster k valid
-        Just valid -> yield $ valid
-        Nothing    -> exclude predicate
+    Just ( Cluster k d ) -> do
+      let all@(keep, remove) = partition predicate d
+--      when (validate2 all) $ liftIO ( (mapM_ (putStrLn . path) rem))
+--      when (validate2 all) $ liftIO ( (mapM_ (action) rem))
+--      when (validate2 all) $ action remove
+--      when (validate2 all) $ yield (action remove)
+      when (validate2 all) $ yield $ (mapM (putStrLn . path) remove)
+      exclude predicate -- action
+--      case validate (partition predicate d) of
+--        Just valid -> yield valid
+--        Nothing    -> exclude predicate
     Nothing -> return ()
   where
     -- TODO Implement:
@@ -173,6 +180,10 @@ exclude predicate =
     -- keep files must exist
     -- keep files must not be a symlink to a remove file
     validate (keep, remove) = if (null remove) then Nothing else Just remove
+    validate2 (keep, remove) = not $ null remove
+--    clean = yield
+    clean2 :: Monad m => [String] -> ConduitM i [IO ()] m ()
+    clean2 = yield . map putStrLn
 
 prune :: Conduit FilePath IO FilePath
 -- ^Prunes files with the same cannonical path.
@@ -201,8 +212,23 @@ md5 :: FileSummary -> IO Partitioner
 --    return $ MD5Digest hash
 md5 = fmap MD5Digest . hashFile . path
 
+duplicates :: Conduit (Cluster Partitioner FileSummary) IO (Cluster Partitioner FileSummary)
+duplicates = CL.filter ((> 1) . length . content)
+
+uniques :: Conduit (Cluster Partitioner FileSummary) IO (Cluster Partitioner FileSummary)
+uniques = CL.filter ((== 1) . length . content)
 
 --main = walk2 "test" $= prune $= mapSummary $= gSize $= (dig md5) $= (dig cmpFilesData) $= (dig.ContentClassifier $ cmpFilesData) $$ CL.consume
-main = walk2 "test" $= prune $= mapSummary $= gSize $= (dig md5) $= (dig cmpFilesData) $= (dig.ContentClassifier $ cmpFilesData)
-       $= exclude (("test/Spec.hs" ==) . path)
+main = walk2 "test"
+      $= prune
+      $= mapSummary
+      $= gSize
+      $= (dig md5)
+      $= (dig cmpFilesData)
+      $= (dig.ContentClassifier $ cmpFilesData)
+--       $= duplicates
+      $= uniques
+--       $= exclude (("test/Spec.hs" ==) . path) (putStrLn . path)
+--       $= exclude (("test/Spec.hs" ==) . path) (liftIO . mapM_ (putStrLn . path))
+       $= exclude (("test/Spec.hs" ==) . path) --(mapM (putStrLn . path))
       $$ CL.consume

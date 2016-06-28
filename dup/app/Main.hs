@@ -24,6 +24,7 @@ import qualified Data.Map.Strict as Map
 import System.Posix
 import Data.Maybe (fromMaybe, fromJust)
 import Data.Function (fix, on)
+import Data.List ((\\), partition)
 
 -- type Source m a = ConduitM () a m () -- no meaningful input or return value
 -- type Conduit a m b = ConduitM a b m () -- no meaningful return value
@@ -43,6 +44,10 @@ data FileSummary = FileSummary {
                   path   :: FilePath
                 , status :: FileStatus
                 }
+
+instance Eq FileSummary where
+  FileSummary path1 _ == FileSummary path2 _ = path1 == path2
+
 instance Show FileSummary where
   --show fileData = "{ path='" ++ (path fileData) ++ "' }"
   show fileData = printf "{ path='%s' }" (path fileData)
@@ -76,41 +81,40 @@ walk2 topPath = do
       then walk2 path
       else yield path
 
+class Classifier classifier a m c | classifier -> m c where
+  classify :: (Monad m) => classifier -> [a] -> m [c]
 
-class Classifier classifier k a m c 
-               | classifier -> m c
-               , c -> k
-  where
-    classify :: (Monad m) => classifier -> [a] -> m [c]
-    cluster :: classifier -> [k] -> c -> Cluster k a
-
-instance Classifier (FileSummary -> IO Partitioner) Partitioner FileSummary IO (Partitioner, [FileSummary]) where
+instance Classifier (FileSummary -> IO Partitioner) FileSummary IO (Partitioner, [FileSummary]) where
   classify = classifyM
-  cluster _ x (key, val) = Cluster (key : x) val
 
-instance Classifier (FileSummary -> FileSummary -> IO Bool) Partitioner FileSummary IO (Partitioner, [FileSummary]) where
+instance Classifier (FileSummary -> FileSummary -> IO Bool) FileSummary IO (Partitioner, [FileSummary]) where
   classify classifier = (fmap $ map (Content,)) . (classifyBinary classifier)
-  cluster _ x (key, val) = Cluster (key : x) val
 
 newtype ContentClassifier = ContentClassifier (FileSummary -> FileSummary -> IO Bool)
-instance Classifier ContentClassifier Partitioner FileSummary IO [FileSummary] where
-  classify (ContentClassifier a) = classifyBinary a
-  cluster _ clusterKey = Cluster (Content : clusterKey)
+instance Classifier ContentClassifier FileSummary IO (Partitioner, [FileSummary]) where
+  classify (ContentClassifier classifier) = (fmap $ map (Content,)) . (classifyBinary classifier)
 
-dig :: (MonadIO m, Classifier classifier k a IO c) => classifier -> Conduit (Cluster k a) m (Cluster k a) -- TODO: Why do we need IO explicitely?
+--TODO: Why do we need IO explicitely?
+dig :: (MonadIO m, Classifier classifier a IO (k, [a])) => classifier -> Conduit (Cluster k a) m (Cluster k a)
 dig classifier =
   await >>= \case
     Nothing -> return ()
-    Just ( Cluster clusterKey clusterValue ) -> do
-      categories <- liftIO $ classify classifier clusterValue
+    Just currentCluster@(Cluster currentKey currentValue) -> do
+      categories <- liftIO $ classify classifier currentValue
 
-      when (length clusterValue == length categories) $ 
-        yield $ Cluster clusterKey clusterValue
+      when (length currentValue == length categories) $
+        yield currentCluster
 
-      when (length clusterValue /= length categories) $ 
-        mapM_ (yield . (cluster classifier clusterKey)) categories
+      when (length currentValue /= length categories) $
+        --mapM_ (yield . (createSubclusterFrom currentKey)) categories
+        --  createSubclusterFrom x (key, val) = Cluster (key : x) val
+        --mapM_ (\(k, v) -> yield $ Cluster (k : currentKey) v) categories
+        --mapM_ (\(subKey, subCluster) -> yield $ Cluster (currentKey ++ [subKey]) subCluster) categories
+        mapM_ (yield . uncurry Cluster . join currentKey) categories
 
       dig classifier
+  where
+    join currentKey (subkey, subcluster) = (currentKey ++ [subkey], subcluster)
 
 cmpFilesData :: FileSummary -> FileSummary -> IO Bool
 --cmpFilesData a b = cmpFiles (path a) (path b)
@@ -152,6 +156,23 @@ gSize = conduit Map.empty
           --Map.traverseWithKey (\k v -> yield v) map
           return ()
 
+--exclude :: (Eq b, Monad m) => (b -> Bool) -> Conduit (Cluster a b) m (Cluster a b)
+-- TODO: Should not return a cluster any more, and probably should not receive a
+-- cluster either
+exclude predicate =
+  await >>= \case
+    Just ( Cluster k d ) ->
+      case validate (partition predicate d) of
+--        Just valid -> yield $ Cluster k valid
+        Just valid -> yield $ valid
+        Nothing    -> exclude predicate
+    Nothing -> return ()
+  where
+    -- TODO Implement:
+    -- should keep at least one
+    -- keep files must exist
+    -- keep files must not be a symlink to a remove file
+    validate (keep, remove) = if (null remove) then Nothing else Just remove
 
 prune :: Conduit FilePath IO FilePath
 -- ^Prunes files with the same cannonical path.
@@ -181,7 +202,7 @@ md5 :: FileSummary -> IO Partitioner
 md5 = fmap MD5Digest . hashFile . path
 
 
-
-main :: IO [Cluster Partitioner FileSummary]
 --main = walk2 "test" $= prune $= mapSummary $= gSize $= (dig md5) $= (dig cmpFilesData) $= (dig.ContentClassifier $ cmpFilesData) $$ CL.consume
-main = walk2 "test" $= prune $= mapSummary $= gSize $= (dig md5) $= (dig cmpFilesData) $= (dig.ContentClassifier $ cmpFilesData) $$ CL.consume
+main = walk2 "test" $= prune $= mapSummary $= gSize $= (dig md5) $= (dig cmpFilesData) $= (dig.ContentClassifier $ cmpFilesData)
+       $= exclude (("test/Spec.hs" ==) . path)
+      $$ CL.consume

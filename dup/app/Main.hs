@@ -156,34 +156,17 @@ gSize = conduit Map.empty
           --Map.traverseWithKey (\k v -> yield v) map
           return ()
 
---exclude :: (Monad m) => (FilePath -> Bool) -> Conduit (Cluster a FilePath) m (Cluster a FilePath)
+--cleanup :: (Monad m) => (FilePath -> Bool) -> Conduit (Cluster a FilePath) m (Cluster a FilePath)
 -- TODO: Probably should not receive a
 -- cluster either
---exclude :: (FileSummary -> Bool) -> Conduit [()] IO ()
-exclude predicate = -- action =
+--cleanup :: (FileSummary -> Bool) -> Conduit [()] IO ()
+cleanup validate predicate action =
   await >>= \case
     Just ( Cluster k d ) -> do
       let all@(keep, remove) = partition predicate d
---      when (validate2 all) $ liftIO ( (mapM_ (putStrLn . path) rem))
---      when (validate2 all) $ liftIO ( (mapM_ (action) rem))
---      when (validate2 all) $ action remove
---      when (validate2 all) $ yield (action remove)
-      when (validate2 all) $ mapM_ (yield . putStrLn . path) remove
-      exclude predicate -- action
---      case validate (partition predicate d) of
---        Just valid -> yield valid
---        Nothing    -> exclude predicate
+      when (validate all) $ mapM_ (yield . action) remove
+      cleanup validate predicate action
     Nothing -> return ()
-  where
-    -- TODO Implement:
-    -- should keep at least one
-    -- keep files must exist
-    -- keep files must not be a symlink to a remove file
-    validate (keep, remove) = if (null remove) then Nothing else Just remove
-    validate2 (keep, remove) = not $ null remove
---    clean = yield
-    clean2 :: Monad m => [String] -> ConduitM i [IO ()] m ()
-    clean2 = yield . map putStrLn
 
 prune :: Conduit FilePath IO FilePath
 -- ^Prunes files with the same cannonical path.
@@ -228,9 +211,11 @@ main =
       $= (dig md5)
       $= (dig cmpFilesData)
       $= (dig.ContentClassifier $ cmpFilesData)
---       $= duplicates
+--      $= duplicates
       $= uniques
---       $= exclude (("test/Spec.hs" ==) . path) (putStrLn . path)
---       $= exclude (("test/Spec.hs" ==) . path) (liftIO . mapM_ (putStrLn . path))
-      $= exclude (("test/Spec.hs" ==) . path) --(mapM (putStrLn . path))
+      -- TODO Implement:
+      -- should keep at least one
+      -- keep files must exist
+      -- keep files must not be a symlink to a remove file
+      $= cleanup (not . null . snd) (("test/Spec.hs" ==) . path) (putStrLn . path)
       $$ CL.consume

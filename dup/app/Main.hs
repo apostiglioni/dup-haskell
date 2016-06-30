@@ -156,16 +156,16 @@ gSize = conduit Map.empty
           --Map.traverseWithKey (\k v -> yield v) map
           return ()
 
---cleanup :: (Monad m) => (FilePath -> Bool) -> Conduit (Cluster a FilePath) m (Cluster a FilePath)
+--sieve :: (Monad m) => (FilePath -> Bool) -> Conduit (Cluster a FilePath) m (Cluster a FilePath)
 -- TODO: Probably should not receive a
 -- cluster either
---cleanup :: (FileSummary -> Bool) -> Conduit [()] IO ()
-cleanup validate predicate action =
+--sieve :: (FileSummary -> Bool) -> Conduit [()] IO ()
+sieve validate predicate =
   await >>= \case
     Just ( Cluster k d ) -> do
       let all@(keep, remove) = partition predicate d
-      when (validate all) $ mapM_ (yield . action) remove
-      cleanup validate predicate action
+      when (validate all) $ mapM_ yield remove
+      sieve validate predicate
     Nothing -> return ()
 
 prune :: Conduit FilePath IO FilePath
@@ -203,7 +203,6 @@ uniques = CL.filter ((== 1) . length . content)
 
 --main = walk2 "test" $= prune $= mapSummary $= gSize $= (dig md5) $= (dig cmpFilesData) $= (dig.ContentClassifier $ cmpFilesData) $$ CL.consume
 main =
-         join $ fmap sequence $
          walk2 "test"
       $= prune
       $= mapSummary
@@ -213,9 +212,14 @@ main =
       $= (dig.ContentClassifier $ cmpFilesData)
 --      $= duplicates
       $= uniques
-      -- TODO Implement:
+--      $= sieve (not . null . snd) (("test/Spec.hs" ==) . path)
+      $= CL.map ((partition (("test/Spec.hs" ==) . path)) . content)
+      -- TODO Implement shield:
+      $= CL.filter (not . null . snd)
       -- should keep at least one
       -- keep files must exist
       -- keep files must not be a symlink to a remove file
-      $= cleanup (not . null . snd) (("test/Spec.hs" ==) . path) (putStrLn . path)
-      $$ CL.consume
+      $= CL.map snd
+      $= CL.concat
+      $$ CL.mapM_ (putStrLn . path)
+--        $$ CL.consume

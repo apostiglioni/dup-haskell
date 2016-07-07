@@ -95,22 +95,33 @@ instance Classifier ContentClassifier FileSummary IO (Partitioner, [FileSummary]
   classify (ContentClassifier classifier) = (fmap $ map (Content,)) . (classifyBinary classifier)
 
 --TODO: Why do we need IO explicitely?
-dig :: (MonadIO m, Classifier classifier a IO (k, [a])) => classifier -> Conduit (Cluster k a) m (Cluster k a)
+--dig :: (MonadIO m, Classifier classifier a IO (k, [a])) => classifier -> Conduit (Cluster k a) m (Cluster k a)
+--dig :: ([FileSummary] -> IO [(Partitioner, [FileSummary])]) -> Conduit (Cluster Partitioner FileSummary) IO (Cluster Partitioner FileSummary)
+
+--dig :: (Monad m, Monad n) =>
+--       ([a] -> n [(a1, [a])]) -> ConduitM (Cluster a1 a) (Cluster a1 a) m ()
 dig classifier =
   await >>= \case
     Nothing -> return ()
     Just currentCluster@(Cluster currentKey currentValue) -> do
-      categories <- liftIO $ classify classifier currentValue
+--      categories <- liftIO $ classifier currentValue
+--      let categories = classifier currentValue
+      categories <- classifier currentValue
 
-      when (length currentValue == length categories) $
-        yield currentCluster
+--      pp <- fmap length (return currentValue)
+--      pp1 <- fmap length (return categories)
 
-      when (length currentValue /= length categories) $
-        --mapM_ (yield . (createSubclusterFrom currentKey)) categories
-        --  createSubclusterFrom x (key, val) = Cluster (key : x) val
-        --mapM_ (\(k, v) -> yield $ Cluster (k : currentKey) v) categories
-        --mapM_ (\(subKey, subCluster) -> yield $ Cluster (currentKey ++ [subKey]) subCluster) categories
-        mapM_ (yield . uncurry Cluster . join currentKey) categories
+--      when (pp == pp1) $
+--      when (length currentValue == length categories) $
+--        yield currentCluster
+----
+--      when (length currentValue /= length categories) $
+----        --mapM_ (yield . (createSubclusterFrom currentKey)) categories
+----        --  createSubclusterFrom x (key, val) = Cluster (key : x) val
+----        --mapM_ (\(k, v) -> yield $ Cluster (k : currentKey) v) categories
+----        --mapM_ (\(subKey, subCluster) -> yield $ Cluster (currentKey ++ [subKey]) subCluster) categories
+
+      mapM_ (yield . uncurry Cluster . join currentKey) categories
 
       dig classifier
   where
@@ -201,17 +212,25 @@ duplicates = CL.filter ((> 1) . length . content)
 uniques :: Conduit (Cluster Partitioner FileSummary) IO (Cluster Partitioner FileSummary)
 uniques = CL.filter ((== 1) . length . content)
 
+
+classifyAs const classifier = (fmap $ map (const,)) . (classifyBinary classifier)
+
+digIO classifier = dig $ liftIO . classifier
+
 --main = walk2 "test" $= prune $= mapSummary $= gSize $= (dig md5) $= (dig cmpFilesData) $= (dig.ContentClassifier $ cmpFilesData) $$ CL.consume
 main =
          walk2 "test"
       $= prune
       $= mapSummary
       $= gSize
-      $= (dig md5)
-      $= (dig cmpFilesData)
-      $= (dig.ContentClassifier $ cmpFilesData)
+--      $= (dig $ liftIO . classifyM md5)
+--      $= (dig $ liftIO . classifyAs Content cmpFilesData)
+      $= (digIO $ classifyM md5)
+      $= (digIO $ classifyAs Content cmpFilesData)
+--      $= (dig cmpFilesData)
+--      $= (dig.ContentClassifier $ cmpFilesData)
 --      $= duplicates
-      $= uniques
+--      $= uniques
 --      $= sieve (not . null . snd) (("test/Spec.hs" ==) . path)
       $= CL.map ((partition (("test/Spec.hs" ==) . path)) . content)
       -- TODO Implement shield:
@@ -222,4 +241,4 @@ main =
       $= CL.map snd
       $= CL.concat
       $$ CL.mapM_ (putStrLn . path)
---        $$ CL.consume
+--      $$ CL.consume

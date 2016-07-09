@@ -2,6 +2,7 @@
 
 module Category
        ( classifyM
+       , classify'
        , classifyBinary
        , classifyBinary'
        ) where
@@ -44,10 +45,10 @@ classifyM classifier = loop Map.empty
       loop (Map.insert category (x : members) acc) xs
 
 
-classify' :: Ord k => (a -> k) -> [a] -> Map.Map k [a]
+classify' :: Ord k => (a -> k) -> [a] -> [(k, [a])]
 classify' classifier = loop Map.empty
   where
-    loop acc [] = acc
+    loop acc [] = Map.toList acc
     loop acc (x : xs) = do
       let category = classifier x
       let members = fromMaybe [] (Map.lookup category acc)

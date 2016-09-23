@@ -2,7 +2,6 @@
 {-# LANGUAGE LambdaCase #-}
 
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TupleSections #-}
 
@@ -25,6 +24,8 @@ import System.Posix
 import Data.Maybe (fromMaybe, fromJust)
 import Data.Function (fix, on)
 import Data.List ((\\), partition)
+
+import Control.Monad.Writer
 
 -- type Source m a = ConduitM () a m () -- no meaningful input or return value
 -- type Conduit a m b = ConduitM a b m () -- no meaningful return value
@@ -175,9 +176,15 @@ classifyAs const classifier = (fmap $ map (const,)) . (classifyBinary classifier
 
 digM m classifier = dig $ m . classifier
 
-digIO classifier = dig $ liftIO . classifier
+digIO
+  :: (Foldable t, MonadIO m)
+  => ([a] -> IO (t (a1, [a]))) -> ConduitM (Cluster a1 a) (Cluster a1 a) m ()
+digIO = digM liftIO
 
-digPure classifier = dig $ pure . classifier
+digPure
+  :: (Monad m, Foldable t)
+  => ([a] -> t (a1, [a])) -> ConduitM (Cluster a1 a) (Cluster a1 a) m ()
+digPure = digM pure
 
 shield :: (a1, [a]) -> Bool
 -- TODO Implement shield:
@@ -196,7 +203,9 @@ collectAsCluster = collect [] where
         yield $ Cluster [] list
         return ()
       Just summary -> collect $ summary : list
-
+sourceFiles
+  :: MonadIO m =>
+     FilePath -> ConduitM a (Cluster a1 FileSummary) m ()
 sourceFiles path =
     walk2 path
  $= prune
@@ -214,15 +223,35 @@ cleanup action =
   $= CL.mapM_ action
 
 main =
+  return $ runWriter 
+   (
       sourceFiles "test"
 --    $= (dig $ pure . classify' (FileSize . fileSize . status))
-      $= (digPure $ classify' (FileSize . fileSize . status))
+--      $= (digPure $ classify' (FileSize . fileSize . status))
 --    $= (dig $ liftIO . classifyM md5)
-      $= (digIO $ classifyM md5)
+--      $= (digIO $ classifyM md5)
 --    $= (dig $ liftIO . classifyAs Content cmpFilesData)
-      $= (digIO $ classifyAs Content cmpFilesData)
-      $= duplicates
+--      $= (digIO $ classifyAs Content cmpFilesData)
+--      $= duplicates
 --      $= uniques
-      $= matchingFiles ("test/Spec.hs" ==)
-      $$ cleanup (putStrLn . path)
---      $$ CL.consume
+--      $= matchingFiles ("test/Spec.hs" ==)
+      $= (logg $ \x -> "Hola mundo")
+--      $$ cleanup (putStrLn . path)
+      $$ CL.consume)
+
+
+--logg :: MonadWriter [t] m => (o -> t) -> Conduit o m o
+logg logger =
+  await >>= \case
+    Nothing -> return ()
+    Just value -> do
+      tell [ logger value ]
+      yield value
+      logg logger
+
+
+
+half :: Int -> Writer String Int
+half x = do
+        tell ("I just halved " ++ (show x) ++ "!")
+        return (x `div` 2)

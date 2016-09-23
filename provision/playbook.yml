@@ -1,0 +1,4 @@
+---
+tasks:
+  - name: install haskell
+    package: name=haskell-platform state=latest
